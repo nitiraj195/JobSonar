@@ -13,7 +13,7 @@ export SQS_ENDPOINT_URL SQS_QUEUE_URL AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_AC
 
 POSTGRES_DSN ?= postgres://jobsonar:jobsonar@localhost:5432/jobsonar?sslmode=disable
 
-.PHONY: up down migrate test connector publish worker ingest demo wait-db
+.PHONY: up down migrate test connector publish worker ingest demo wait-db show-jobs
 
 up:
 	$(COMPOSE) up -d
@@ -59,3 +59,8 @@ ingest: up migrate publish
 # Needs ADZUNA_APP_ID / ADZUNA_APP_KEY in the environment or .env.
 demo: up migrate
 	$(MAKE) connector
+
+# Quick look at what's landed in Postgres after `make ingest`.
+show-jobs:
+	$(COMPOSE) exec -T postgres psql -U $${POSTGRES_USER:-jobsonar} -d $${POSTGRES_DB:-jobsonar} -c \
+		"SELECT company, title, location, source, posted_at FROM jobs ORDER BY first_seen_at DESC LIMIT 20;"
