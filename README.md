@@ -53,6 +53,62 @@ Build in two vertical stripes. **Stripe one** is the boring-but-real data path �
 
 ---
 
+## Local machine setup
+
+Everything below runs on a laptop with Docker, Go, Python, and Node — no cloud account needed.
+
+**Prerequisites:** Docker (Postgres+pgvector, ElasticMQ, Ollama), Go 1.24+, Python 3.9+, Node.js/npm.
+
+### 1. Configure environment
+
+```
+cp .env.example .env
+```
+
+Fill in `ADZUNA_APP_ID`/`ADZUNA_APP_KEY` ([developer.adzuna.com](https://developer.adzuna.com)) and/or `JOOBLE_API_KEY` ([jooble.org/api/about](https://jooble.org/api/about)) if you want real job data — both are free-tier. Everything else in `.env.example` already has a working local default.
+
+### 2. Start the local stack
+
+```
+make up        # Postgres+pgvector, ElasticMQ, Ollama
+make migrate   # apply db/migrations
+make seed      # target Greenhouse companies + a starter skill profile
+```
+
+### 3. Ingest jobs
+
+```
+make ingest      # connector -> SQS -> worker -> Postgres (needs ADZUNA_* and/or JOOBLE_* keys)
+make show-jobs   # list what landed (or: make show jobs)
+```
+
+### 4. Set up the agent (resume parsing + embeddings)
+
+```
+make agent-install   # one-time: creates services/agent/.venv
+make ollama-pull     # pulls nomic-embed-text
+```
+
+If `ollama-pull` fails (a corporate TLS proxy commonly blocks it), skip it and use `EMBED_BACKEND=fake` in `.env` instead — deterministic local vectors, no model download.
+
+### 5. Run the services
+
+Each runs in its own terminal and stays running:
+
+```
+make api     # Go Fiber API — http://localhost:8080
+make agent   # long-running: parses uploaded resumes, embeds jobs/profile
+make web     # Vite dev server — http://localhost:5173 (proxies /jobs /profile /applications /companies to :8080)
+```
+
+(`make agent` runs forever, watching for new resume uploads. For a single parse-and-embed pass instead — e.g. right after uploading — run `make embed` instead of leaving `make agent` running.)
+
+### 6. Use the UI, including resume (PDF/DOCX) upload
+
+Open **http://localhost:5173**. The Jobs page has a "Resume (PDF or DOCX)" file input — pick a file, it uploads via `POST /profile/resume`, and the page polls automatically until the agent finishes parsing and embedding it, then re-ranks jobs by semantic similarity. No separate profile page or upload command needed.
+
+---
+
 ## Document index
 
 - [`docs/FRD.md`](docs/FRD.md) — Functional Requirements

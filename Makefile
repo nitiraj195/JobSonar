@@ -62,7 +62,7 @@ web-build:
 	cd $(WEB) && npm install && npm run build
 
 agent-install:
-	cd $(AGENT) && (command -v python3.11 >/dev/null && python3.11 || python3) -m venv .venv && .venv/bin/python -m pip install -U pip setuptools && .venv/bin/pip install -e ".[dev]"
+	cd $(AGENT) && PY=$$(command -v python3.11 || command -v python3) && $$PY -m venv .venv && .venv/bin/python -m pip install -U pip setuptools && .venv/bin/pip install -e ".[dev]"
 
 # Long-running parse/embed loop (Postgres only; no HTTP to the API).
 # EMBED_BACKEND=fake when Ollama has no nomic-embed-text model.
