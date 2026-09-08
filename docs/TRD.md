@@ -42,6 +42,11 @@ company_reviews(company_key, role_key, company, role_title, rating, review_count
          summary, snippets jsonb, links jsonb, provider, status, error, fetched_at)
          -- cache of company+role reputation. Glassdoor/Mouthshut have no public
          -- read API; provider=links (outbound URLs only) or brave (official Search API)
+tailor_jobs(id, profile_id, resume_id, job_id, source, title, company, jd_md,
+         resume_md, cover_letter_md, notes_md, model, resume_docx_uri, cover_docx_uri,
+         status, error, created_at, updated_at)
+         -- on-demand JD → tailored resume + cover letter DOCX. Agent writes files under
+         -- TAILOR_DIR; API streams them. Never submitted. Raw resume stays on disk.
 ```
 
 `dedup_hash = sha256(lower(company) || '|' || normalize(title) || '|' || normalize(location))`.
@@ -89,6 +94,11 @@ GET  /jobs               rank by scores.composite; omit band=excluded; include n
 GET  /jobs/{id}          job detail + full breakdown + optional analysis (justification/tailoring); excluded jobs still returned so the gate is explainable
                          refreshes a stale company+role review via Brave (if keyed) or link-only
 POST /reviews/refresh    cache reviews for salary-listed jobs (max 40). No Glassdoor/Mouthshut scrape.
+POST /tailor             queue a JD (json jd_md, job_id, or .md/.txt upload). 202 pending; agent drafts locally
+GET  /tailor             recent tailor_jobs (no JD body)
+GET  /tailor/{id}        JD + resume_md + cover_letter_md + notes when status=done
+GET  /tailor/{id}/resume.docx   download tailored resume (DOCX)
+GET  /tailor/{id}/cover.docx    download cover letter (DOCX)
 GET  /applications       tracker rows
 POST /applications       create application (default status saved)
 PATCH /applications/{id} change status (appends event)

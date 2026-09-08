@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ type fake struct {
 	apps      []store.Application
 	resumes   []store.Resume
 	lastOpts  store.JobListOpts
+	tailors   []store.TailorJob
 }
 
 func (f *fake) ListJobs(_ context.Context, opts store.JobListOpts) ([]store.Job, error) {
@@ -98,6 +100,27 @@ func (f *fake) LatestResume(context.Context) (store.Resume, error) {
 	return f.resumes[len(f.resumes)-1], nil
 }
 
+func (f *fake) CreateTailorJob(_ context.Context, in store.TailorCreate) (store.TailorJob, error) {
+	t := store.TailorJob{
+		ID: uuid.New(), Source: in.Source, Title: in.Title, Company: in.Company,
+		JDMD: in.JDMD, Status: "pending", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		JobID: in.JobID,
+	}
+	f.tailors = append(f.tailors, t)
+	return t, nil
+}
+
+func (f *fake) GetTailorJob(_ context.Context, id uuid.UUID) (store.TailorJob, error) {
+	for _, t := range f.tailors {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return store.TailorJob{}, store.ErrNotFound
+}
+
+func (f *fake) ListTailorJobs(context.Context) ([]store.TailorJob, error) { return f.tailors, nil }
+
 func (f *fake) UpdateApplicationStatus(_ context.Context, id uuid.UUID, status string) (store.Application, error) {
 	for i, a := range f.apps {
 		if a.ID == id {
@@ -117,7 +140,7 @@ func setup(t *testing.T, f *fake) *fiber.App {
 		}
 		return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 	}})
-	New(f, f, f, f, f, t.TempDir()).Mount(app)
+	New(f, f, f, f, f, t.TempDir()).WithTailor(f).Mount(app)
 	return app
 }
 
@@ -428,5 +451,88 @@ func TestUploadResume(t *testing.T) {
 	}
 	if resp.StatusCode != 400 {
 		t.Fatalf("txt status=%d", resp.StatusCode)
+	}
+}
+
+func TestCreateTailorFromPasteAndJob(t *testing.T) {
+	jobID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	f := &fake{jobs: []store.Job{{
+		ID: jobID, Title: "SRE", Company: "Acme", DescriptionMD: "Need kubernetes and terraform.",
+	}}}
+	app := setup(t, f)
+
+	req := httptest.NewRequest("POST", "/tailor", bytes.NewBufferString(
+		`{"title":"DevOps","company":"Example","jd_md":"# Role\nNeed AWS and Kubernetes."}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 202 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("paste status=%d %s", resp.StatusCode, body)
+	}
+	if len(f.tailors) != 1 || f.tailors[0].Status != "pending" || !strings.Contains(f.tailors[0].JDMD, "Kubernetes") {
+		t.Fatalf("%+v", f.tailors)
+	}
+
+	fromJob := httptest.NewRequest("POST", "/tailor", bytes.NewBufferString(`{"job_id":"`+jobID.String()+`"}`))
+	fromJob.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(fromJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 202 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("job status=%d %s", resp.StatusCode, body)
+	}
+	if f.tailors[1].Title != "SRE" || f.tailors[1].Source != "job" {
+		t.Fatalf("%+v", f.tailors[1])
+	}
+
+	empty := httptest.NewRequest("POST", "/tailor", bytes.NewBufferString(`{}`))
+	empty.Header.Set("Content-Type", "application/json")
+	resp, err = app.Test(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Fatalf("empty status=%d", resp.StatusCode)
+	}
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := w.CreateFormFile("file", "jd.md")
+	_, _ = part.Write([]byte("# Staff SRE\nOwn the on-call rotation."))
+	_ = w.WriteField("company", "Acme")
+	_ = w.Close()
+	up := httptest.NewRequest("POST", "/tailor", &buf)
+	up.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err = app.Test(up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 202 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status=%d %s", resp.StatusCode, body)
+	}
+	if f.tailors[2].Source != "upload" || !strings.Contains(f.tailors[2].JDMD, "on-call") {
+		t.Fatalf("%+v", f.tailors[2])
+	}
+
+	docx, err := app.Test(httptest.NewRequest("GET", "/tailor/"+f.tailors[0].ID.String()+"/resume.docx", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if docx.StatusCode != 404 {
+		t.Fatalf("docx before agent status=%d", docx.StatusCode)
+	}
+
+	list, err := app.Test(httptest.NewRequest("GET", "/tailor", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.StatusCode != 200 {
+		t.Fatalf("list status=%d", list.StatusCode)
 	}
 }

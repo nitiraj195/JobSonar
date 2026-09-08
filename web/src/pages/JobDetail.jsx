@@ -155,6 +155,7 @@ export default function JobDetail() {
       )}
       <div className="actions">
         <a className="btn ghost" href={job.source_url} target="_blank" rel="noreferrer">Open posting</a>
+        <Link className="btn ghost" to={`/tailor?job=${job.id}`}>Tailor resume + cover letter</Link>
         {!job.application && <button className="btn" disabled={busy} onClick={save}>Save to tracker</button>}
         {job.application && (
           <label>

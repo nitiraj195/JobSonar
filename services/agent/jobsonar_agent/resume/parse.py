@@ -33,7 +33,7 @@ def extract_skills(text: str, lexicon: tuple[str, ...] = SKILLS) -> list[str]:
 def extract_text(path: str | Path) -> str:
     p = Path(path)
     suffix = p.suffix.lower()
-    if suffix == ".txt":
+    if suffix in {".txt", ".md"}:
         return p.read_text(encoding="utf-8", errors="replace")
     if suffix == ".pdf":
         from pypdf import PdfReader

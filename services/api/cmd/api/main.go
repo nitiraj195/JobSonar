@@ -59,7 +59,7 @@ func main() {
 		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders: "Origin, Content-Type, Accept",
 	}))
-	handlers.New(db, db, db, db, db, resumeDir).WithReviews(reviews.NewFromEnv(), db).Mount(app)
+	handlers.New(db, db, db, db, db, resumeDir).WithReviews(reviews.NewFromEnv(), db).WithTailor(db).Mount(app)
 
 	go func() {
 		log.Printf("api listening on %s", addr)

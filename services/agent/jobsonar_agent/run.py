@@ -18,6 +18,7 @@ from jobsonar_agent.score.recency import fit as recency_fit
 from jobsonar_agent.score.seniority import fit as seniority_fit
 from jobsonar_agent.score.skill_coverage import coverage, extract_job_skills
 from jobsonar_agent.store import Store
+from jobsonar_agent.tailor.run import drain_tailor_jobs
 
 log = logging.getLogger("jobsonar.agent")
 
@@ -166,6 +167,7 @@ def _counts(result: dict) -> dict[str, int]:
         "scored": fp.get("scored", 0),
         "deep_dive": len(result.get("prompted_job_ids") or []),
         "premium_calls": result.get("premium_calls") or 0,
+        "tailored": result.get("tailored") or 0,
     }
 
 
@@ -174,9 +176,16 @@ def once(store: Store | None = None, embedder: Embedder | None = None, graph=Non
     if embedder is None:
         embedder = FakeEmbedder() if config.EMBED_BACKEND == "fake" else OllamaEmbedder()
     if graph is not None:
-        return _counts(graph.invoke({}))
-    llm = resolve_llm()
-    return _counts(run_cascade(store, llm, _first_pass(store, embedder)))
+        counts = _counts(graph.invoke({}))
+    else:
+        llm = resolve_llm()
+        counts = _counts(run_cascade(store, llm, _first_pass(store, embedder)))
+    try:
+        counts["tailored"] = drain_tailor_jobs(store)
+    except Exception as exc:
+        log.warning("tailor drain failed: %s", type(exc).__name__)
+        counts["tailored"] = 0
+    return counts
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -193,9 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         counts = once(store, embedder, graph=graph)
         log.info(
-            "done resumes=%s profiles=%s jobs=%s scored=%s deep_dive=%s premium=%s",
+            "done resumes=%s profiles=%s jobs=%s scored=%s deep_dive=%s premium=%s tailored=%s",
             counts["resumes"], counts["profiles"], counts["jobs"], counts["scored"],
             counts.get("deep_dive", 0), counts.get("premium_calls", 0),
+            counts.get("tailored", 0),
         )
         return 0
     while True:

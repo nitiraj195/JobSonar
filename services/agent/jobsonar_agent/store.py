@@ -373,6 +373,87 @@ class Store:
             )
             conn.commit()
 
+    def latest_done_resume(self) -> dict | None:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, storage_uri
+                FROM resumes
+                WHERE status = 'done'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {"id": row[0], "storage_uri": row[1]}
+
+    def pending_tailor_jobs(self) -> list[dict]:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, title, company, jd_md, status, resume_md, cover_letter_md, notes_md
+                FROM tailor_jobs
+                WHERE status = 'pending'
+                   OR (status = 'done' AND COALESCE(resume_docx_uri, '') = '')
+                ORDER BY created_at
+                """
+            )
+            return [
+                {
+                    "id": r[0],
+                    "title": r[1] or "",
+                    "company": r[2] or "",
+                    "jd_md": r[3] or "",
+                    "status": r[4] or "",
+                    "resume_md": r[5] or "",
+                    "cover_letter_md": r[6] or "",
+                    "notes_md": r[7] or "",
+                }
+                for r in cur.fetchall()
+            ]
+
+    def finish_tailor_job(
+        self,
+        tailor_id: str,
+        *,
+        status: str,
+        error: str = "",
+        resume_id: str | None = None,
+        profile_id: str | None = None,
+        resume_md: str = "",
+        cover_letter_md: str = "",
+        notes_md: str = "",
+        model: str = "",
+        resume_docx_uri: str = "",
+        cover_docx_uri: str = "",
+    ) -> None:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tailor_jobs
+                SET status = %s,
+                    error = %s,
+                    resume_id = COALESCE(%s::uuid, resume_id),
+                    profile_id = COALESCE(%s::uuid, profile_id),
+                    resume_md = %s,
+                    cover_letter_md = %s,
+                    notes_md = %s,
+                    model = %s,
+                    resume_docx_uri = %s,
+                    cover_docx_uri = %s,
+                    updated_at = now()
+                WHERE id = %s::uuid
+                """,
+                (
+                    status, error, resume_id, profile_id,
+                    resume_md, cover_letter_md, notes_md, model,
+                    resume_docx_uri, cover_docx_uri, tailor_id,
+                ),
+            )
+            conn.commit()
+
     def upsert_job_embeddings(self, rows: list[tuple[str, list[float]]], model: str) -> None:
         if not rows:
             return

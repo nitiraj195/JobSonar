@@ -69,6 +69,8 @@ Each requirement has an ID (`FR-n`), a priority (P0 must-have / P1 should / P2 n
 - **FR-24 (P1) Posted-salary filter and high-pay rank.** Seeker can list only jobs that posted a salary range and rank those by pay (currency-normalised), with match score as a tie-break.
   - *Accept:* `GET /jobs?has_salary=1&sort=salary` returns only rows with `salary_min` or `salary_max`, highest approximate USD pay first.
 - **FR-23 (P2) Assisted apply.** One-click open of the application page with a tailored resume suggestion — never automated submission.
+- **FR-25 (P1) JD tailor + cover letter.** Seeker pastes a JD or uploads `.md`/`.txt` (or picks a stored job). The local agent drafts a tailored resume and cover letter from the stored resume file. Drafts are never submitted.
+  - *Accept:* `POST /tailor` returns 202; after `make embed` / `make agent`, `GET /tailor/{id}` has `resume_md` and `cover_letter_md`. No raw resume is sent to Bedrock.
 
 ## 4. Data retention & privacy
 

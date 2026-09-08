@@ -25,3 +25,12 @@ def resolve_llm() -> LLM | None:
 
 def is_premium_backend() -> bool:
     return config.DEEP_DIVE_BACKEND == "bedrock" and config.DEEP_DIVE_OPT_IN
+
+
+def resolve_tailor_llm() -> LLM:
+    """Resume tailoring always stays local (golden rule 5)."""
+    if config.DEEP_DIVE_BACKEND == "ollama":
+        from jobsonar_agent.llm.ollama import OllamaLLM
+
+        return OllamaLLM()
+    return FakeLLM()
