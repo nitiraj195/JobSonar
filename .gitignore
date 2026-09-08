@@ -4,6 +4,7 @@ jobs.ndjson
 node_modules/
 web/dist/
 data/resumes/
+data/tailor/
 services/api/data/
 __pycache__/
 .venv/

@@ -26,3 +26,7 @@ SHORTLIST_BAND = env("SHORTLIST_BAND", "strong")
 BEDROCK_MODEL = env("BEDROCK_MODEL", "anthropic.claude-3-haiku-20240307-v1:0")
 AWS_REGION = env("AWS_REGION", "us-east-1")
 DEEP_DIVE_DESC_CHARS = int(env("DEEP_DIVE_DESC_CHARS", "4000"))
+# Tailor drafts stay on the local LLM. Resume text never goes to Bedrock.
+TAILOR_RESUME_CHARS = int(env("TAILOR_RESUME_CHARS", "12000"))
+TAILOR_JD_CHARS = int(env("TAILOR_JD_CHARS", "8000"))
+TAILOR_DIR = env("TAILOR_DIR", "./data/tailor")

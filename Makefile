@@ -19,7 +19,8 @@ export OLLAMA_HOST EMBED_MODEL EMBED_BACKEND EMBED_BATCH EMBED_TEXT_CHARS SCORE_
 export LLM_MODEL DEEP_DIVE_BACKEND DEEP_DIVE_OPT_IN SHORTLIST_BAND
 export BRAVE_SEARCH_API_KEY
 RESUME_DIR ?= $(CURDIR)/data/resumes
-export RESUME_DIR
+TAILOR_DIR ?= $(CURDIR)/data/tailor
+export RESUME_DIR TAILOR_DIR
 
 POSTGRES_DSN ?= postgres://jobsonar:jobsonar@localhost:5432/jobsonar?sslmode=disable
 LIMIT        ?= 20
@@ -71,7 +72,7 @@ agent-install:
 agent:
 	cd $(AGENT) && PYTHONPATH=. $(AGENT_PY) -m jobsonar_agent
 
-# One drain-and-exit pass: pending resumes, missing vectors, scores, shortlist analyses.
+# One drain-and-exit pass: pending resumes, missing vectors, scores, shortlist analyses, tailor drafts.
 embed:
 	cd $(AGENT) && PYTHONPATH=. $(AGENT_PY) -m jobsonar_agent --once
 
