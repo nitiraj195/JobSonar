@@ -37,7 +37,14 @@ def drain_tailor_jobs(store: Store, llm: LLM | None = None) -> int:
 
 
 def _run_one(store: Store, llm: LLM, row: dict) -> None:
-    resume = store.latest_done_resume()
+    profile_id = row.get("profile_id")
+    if not profile_id:
+        # Every tailor job created via the API now carries a profile_id
+        # (Week 8) -- one without it is stale/malformed data, not a case
+        # to guess at (which profile's resume would we even pick?).
+        store.finish_tailor_job(row["id"], status="error", error="tailor job has no profile — resubmit from the UI")
+        return
+    resume = store.latest_done_resume(profile_id)
     if not resume:
         store.finish_tailor_job(row["id"], status="error", error="upload a resume first")
         return
@@ -45,7 +52,7 @@ def _run_one(store: Store, llm: LLM, row: dict) -> None:
     if not text.strip():
         store.finish_tailor_job(row["id"], status="error", error="resume file is empty")
         return
-    profile = store.current_profile() or {"skills": []}
+    profile = store.get_profile(profile_id) or {"id": profile_id, "skills": []}
     resume_md = (row.get("resume_md") or "").strip()
     cover = (row.get("cover_letter_md") or "").strip()
     notes = (row.get("notes_md") or "").strip()

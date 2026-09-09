@@ -67,11 +67,11 @@ function renderTailorMarkdown(md) {
   return out;
 }
 
-export default function Tailor() {
+export default function Tailor({ profile }) {
   const [params] = useSearchParams();
   const prefillJob = params.get("job") || "";
   const [jobs, setJobs] = useState([]);
-  const [profile, setProfile] = useState(null);
+  const [profileInfo, setProfileInfo] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const [active, setActive] = useState(null);
   const [title, setTitle] = useState("");
@@ -83,7 +83,7 @@ export default function Tailor() {
   const [busy, setBusy] = useState(false);
 
   async function refreshList() {
-    const rows = (await api.tailorJobs()) || [];
+    const rows = (await api.tailorJobs(profile)) || [];
     setDrafts(rows);
     return rows;
   }
@@ -95,25 +95,26 @@ export default function Tailor() {
   }
 
   useEffect(() => {
-    Promise.all([api.jobs(), api.profile(), refreshList()])
+    if (!profile) return;
+    Promise.all([api.jobs({ profile }), api.profile(profile), refreshList()])
       .then(async ([j, p, rows]) => {
         setJobs(j || []);
-        setProfile(p);
+        setProfileInfo(p);
         const latest = (rows || []).find((r) => r.status === "done") || (rows || [])[0];
         if (latest) await openDraft(latest.id);
       })
       .catch((e) => setErr(e.message));
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     if (!prefillJob) return;
-    api.job(prefillJob).then((j) => {
+    api.job(prefillJob, profile).then((j) => {
       setTitle(j.title || "");
       setCompany(j.company || "");
       setJd(j.description_md || "");
       setJobId(j.id);
     }).catch((e) => setErr(e.message));
-  }, [prefillJob]);
+  }, [prefillJob, profile]);
 
   useEffect(() => {
     if (!active || (active.status !== "pending")) return undefined;
@@ -150,7 +151,7 @@ export default function Tailor() {
         company,
         job_id: jobId,
         jd_md: jd,
-      });
+      }, profile);
       setActive(created);
       await refreshList();
       setNotice("Queued. The local agent writes the drafts (make agent or make embed).");
@@ -173,7 +174,7 @@ export default function Tailor() {
       if (title) body.append("title", title);
       if (company) body.append("company", company);
       if (jobId) body.append("job_id", jobId);
-      const created = await api.createTailorUpload(body);
+      const created = await api.createTailorUpload(body, profile);
       setActive(created);
       await refreshList();
       setNotice("JD file queued. Waiting on the local agent.");
@@ -183,7 +184,7 @@ export default function Tailor() {
     }
   }
 
-  const resumeReady = profile?.latest_resume?.status === "done";
+  const resumeReady = profileInfo?.latest_resume?.status === "done";
 
   return (
     <main className="tailor">
@@ -214,7 +215,7 @@ export default function Tailor() {
             if (j) {
               setTitle(j.title || "");
               setCompany(j.company || "");
-              api.job(id).then((full) => setJd(full.description_md || "")).catch((err) => setErr(err.message));
+              api.job(id, profile).then((full) => setJd(full.description_md || "")).catch((err) => setErr(err.message));
             }
           }}>
             <option value="">—</option>

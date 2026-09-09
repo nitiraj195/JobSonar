@@ -84,10 +84,10 @@ function pipeline(profile, jobs, phase) {
   ];
 }
 
-export default function Jobs() {
+export default function Jobs({ profile }) {
   const [jobs, setJobs] = useState([]);
   const [skills, setSkills] = useState("");
-  const [profile, setProfile] = useState(null);
+  const [profileInfo, setProfileInfo] = useState(null);
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [phase, setPhase] = useState("idle");
@@ -101,21 +101,22 @@ export default function Jobs() {
   async function refresh(next = {}) {
     const pay = next.hasSalary ?? hasSalary;
     const order = next.sort ?? sort;
-    const [j, p] = await Promise.all([api.jobs({ hasSalary: pay, sort: order }), api.profile()]);
+    const [j, p] = await Promise.all([api.jobs({ hasSalary: pay, sort: order, profile }), api.profile(profile)]);
     setJobs(j || []);
-    setProfile(p);
+    setProfileInfo(p);
     setSkills((p.skills || []).join(", "));
     return { jobs: j || [], profile: p };
   }
 
   useEffect(() => {
+    if (!profile) return;
     refresh().then(({ profile: p }) => {
       if (p?.latest_resume?.status === "pending") {
         setPhase("waiting");
         watchStarted.current = Date.now();
       }
     }).catch((e) => setErr(e.message));
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     if (phase !== "waiting") return undefined;
@@ -171,7 +172,7 @@ export default function Jobs() {
     setErr("");
     try {
       const list = skills.split(",").map((s) => s.trim()).filter(Boolean);
-      await api.saveProfile(list);
+      await api.saveProfile(list, profile);
       await refresh();
       setNotice("Skill list saved. Re-scoring waits until the next agent pass (make embed or make agent).");
     } catch (e) {
@@ -190,7 +191,7 @@ export default function Jobs() {
     beforeRef.current = snapshot(jobs);
     setPhase("uploading");
     try {
-      await api.uploadResume(file);
+      await api.uploadResume(file, profile);
       watchStarted.current = Date.now();
       setPhase("waiting");
     } catch (e) {
@@ -225,7 +226,7 @@ export default function Jobs() {
     }
   }
 
-  const steps = pipeline(profile, jobs, phase);
+  const steps = pipeline(profileInfo, jobs, phase);
   const scored = jobs.some((j) => j.score != null);
   const busy = phase === "uploading" || phase === "waiting";
   const rankLabel = sort === "salary" ? "high pay (then reviews, then match)" : "composite score";
@@ -305,6 +306,7 @@ export default function Jobs() {
                   <h2>{j.title}</h2>
                   <p>{j.company} · {j.location || "—"} · {j.source}{formatSalary(j) ? ` · ${formatSalary(j)}` : ""}</p>
                   <p className="chips">
+                    {j.personalized_match && <span className="pipe personalized">🎯 personalized match</span>}
                     {j.score && <span className="pipe">{band}</span>}
                     {formatSalary(j) && <span className="pipe">{formatSalary(j)}</span>}
                     {j.review?.rating != null && <span className="pipe">reviews {j.review.rating.toFixed(1)}/5</span>}

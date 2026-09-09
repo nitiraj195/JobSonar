@@ -20,14 +20,15 @@ func ValidStatus(s string) bool {
 	return false
 }
 
-func (s *Store) ListApplications(ctx context.Context) ([]Application, error) {
+func (s *Store) ListApplications(ctx context.Context, profileID uuid.UUID) ([]Application, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.job_id, j.title, j.company, j.location, j.source_url,
 		       a.resume_variant, a.status, a.applied_at, a.notes, a.created_at
 		FROM applications a
 		JOIN jobs j ON j.id = a.job_id
+		WHERE a.profile_id = $1
 		ORDER BY a.created_at DESC
-	`)
+	`, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -46,17 +47,17 @@ func (s *Store) ListApplications(ctx context.Context) ([]Application, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) CreateApplication(ctx context.Context, jobID uuid.UUID) (Application, error) {
-	if _, err := s.GetJob(ctx, jobID); err != nil {
+func (s *Store) CreateApplication(ctx context.Context, profileID, jobID uuid.UUID) (Application, error) {
+	if _, err := s.GetJob(ctx, profileID, jobID); err != nil {
 		return Application{}, err
 	}
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO applications (job_id, status)
-		VALUES ($1, 'saved')
-		ON CONFLICT (job_id) DO UPDATE SET job_id = EXCLUDED.job_id
+		INSERT INTO applications (job_id, profile_id, status)
+		VALUES ($1, $2, 'saved')
+		ON CONFLICT (job_id, profile_id) DO UPDATE SET job_id = EXCLUDED.job_id
 		RETURNING id
-	`, jobID).Scan(&id)
+	`, jobID, profileID).Scan(&id)
 	if err != nil {
 		return Application{}, err
 	}

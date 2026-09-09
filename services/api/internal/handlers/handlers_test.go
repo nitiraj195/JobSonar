@@ -27,12 +27,12 @@ type fake struct {
 	tailors   []store.TailorJob
 }
 
-func (f *fake) ListJobs(_ context.Context, opts store.JobListOpts) ([]store.Job, error) {
+func (f *fake) ListJobs(_ context.Context, _ uuid.UUID, opts store.JobListOpts) ([]store.Job, error) {
 	f.lastOpts = opts
 	return f.jobs, nil
 }
 
-func (f *fake) GetJob(_ context.Context, id uuid.UUID) (store.Job, error) {
+func (f *fake) GetJob(_ context.Context, _ uuid.UUID, id uuid.UUID) (store.Job, error) {
 	for _, j := range f.jobs {
 		if j.ID == id {
 			return j, nil
@@ -49,14 +49,28 @@ func (f *fake) CreateCompany(_ context.Context, name, ats, token string) (store.
 	return c, nil
 }
 
-func (f *fake) GetProfile(context.Context) (store.Profile, error) {
+func (f *fake) GetProfile(context.Context, uuid.UUID) (store.Profile, error) {
 	if f.profile.Skills == nil {
 		f.profile.Skills = []string{}
 	}
 	return f.profile, nil
 }
 
-func (f *fake) UpsertProfile(_ context.Context, skills []string) (store.Profile, error) {
+func (f *fake) GetProfileByName(context.Context, string) (store.Profile, error) {
+	if f.profile.Skills == nil {
+		f.profile.Skills = []string{}
+	}
+	return f.profile, nil
+}
+
+func (f *fake) ListProfiles(context.Context) ([]store.Profile, error) {
+	if f.profile.Skills == nil {
+		f.profile.Skills = []string{}
+	}
+	return []store.Profile{f.profile}, nil
+}
+
+func (f *fake) UpsertProfile(_ context.Context, _ uuid.UUID, skills []string) (store.Profile, error) {
 	f.profile.Skills = skills
 	f.profile.UpdatedAt = time.Now().UTC()
 	if f.profile.ID == uuid.Nil {
@@ -65,9 +79,11 @@ func (f *fake) UpsertProfile(_ context.Context, skills []string) (store.Profile,
 	return f.profile, nil
 }
 
-func (f *fake) ListApplications(context.Context) ([]store.Application, error) { return f.apps, nil }
+func (f *fake) ListApplications(context.Context, uuid.UUID) ([]store.Application, error) {
+	return f.apps, nil
+}
 
-func (f *fake) CreateApplication(_ context.Context, jobID uuid.UUID) (store.Application, error) {
+func (f *fake) CreateApplication(_ context.Context, _ uuid.UUID, jobID uuid.UUID) (store.Application, error) {
 	var job store.Job
 	found := false
 	for _, j := range f.jobs {
@@ -87,13 +103,13 @@ func (f *fake) CreateApplication(_ context.Context, jobID uuid.UUID) (store.Appl
 	return a, nil
 }
 
-func (f *fake) CreateResume(_ context.Context, storageURI string) (store.Resume, error) {
+func (f *fake) CreateResume(_ context.Context, _ uuid.UUID, storageURI string) (store.Resume, error) {
 	r := store.Resume{ID: uuid.New(), Status: "pending", CreatedAt: time.Now().UTC(), StorageURI: storageURI}
 	f.resumes = append(f.resumes, r)
 	return r, nil
 }
 
-func (f *fake) LatestResume(context.Context) (store.Resume, error) {
+func (f *fake) LatestResume(context.Context, uuid.UUID) (store.Resume, error) {
 	if len(f.resumes) == 0 {
 		return store.Resume{}, store.ErrNotFound
 	}
@@ -119,7 +135,9 @@ func (f *fake) GetTailorJob(_ context.Context, id uuid.UUID) (store.TailorJob, e
 	return store.TailorJob{}, store.ErrNotFound
 }
 
-func (f *fake) ListTailorJobs(context.Context) ([]store.TailorJob, error) { return f.tailors, nil }
+func (f *fake) ListTailorJobs(context.Context, uuid.UUID) ([]store.TailorJob, error) {
+	return f.tailors, nil
+}
 
 func (f *fake) UpdateApplicationStatus(_ context.Context, id uuid.UUID, status string) (store.Application, error) {
 	for i, a := range f.apps {

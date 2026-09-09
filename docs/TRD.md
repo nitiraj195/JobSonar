@@ -23,10 +23,13 @@ Hybrid: managed AWS services for stateful/security-heavy plumbing; self-hosted G
 ## 3. Data model (core tables)
 
 ```
-profiles(id pk, skills jsonb, embedding vector(768), updated_at,        -- Week 5: skills + local embedding
-         seniority, location, remote_pref, must_have_skills jsonb)     -- Week 6: hard-gate preferences, all optional (comp_floor not yet needed, deferred)
+profiles(id pk, name unique, skills jsonb, embedding vector(768), updated_at,  -- Week 5: skills + local embedding;
+         seniority, location, remote_pref, must_have_skills jsonb)     -- Week 6: hard-gate preferences, all optional (comp_floor not yet needed, deferred);
+         -- Week 8: `name` (e.g. 'amol', 'nitiraj') replaces "whichever row is
+         -- most recently updated" as how a profile is selected -- API/agent
+         -- callers always pass an explicit profile id/name now.
 
-resumes(id, variant_name, storage_uri, parsed jsonb, status, error, created_at)  -- pending/done/error; no raw text in parsed
+resumes(id, profile_id, variant_name, storage_uri, parsed jsonb, status, error, created_at)  -- pending/done/error; no raw text in parsed; profile_id since Week 8
 jobs(id pk, dedup_hash unique, source, source_url, title, company, location,
      remote_type, description_md, skills_extracted jsonb, salary_min, salary_max,
      currency, posted_at, first_seen_at, last_seen_at, status)
@@ -36,7 +39,9 @@ job_embeddings(job_id, embedding vector(768), model, updated_at)
 scores(job_id, profile_id, composite, skill_cov, semantic, seniority_fit,       -- Week 6: written by the agent's scoring
        location_fit, recency, band, matched_skills jsonb, missing_skills jsonb, scored_at)  -- pass; API only reads this
 analyses(job_id, profile_id, justification_md, tailoring_md, model, created_at)  -- shortlist only
-applications(id, job_id, resume_variant, status, applied_at, notes, contacts jsonb)
+applications(id, job_id, profile_id, resume_variant, status, applied_at, notes, contacts jsonb)
+         -- unique(job_id, profile_id) since Week 8: each profile tracks the
+         -- same job independently (was unique(job_id) alone, single-user only)
 application_events(application_id, from_status, to_status, at)
 company_reviews(company_key, role_key, company, role_title, rating, review_count,
          summary, snippets jsonb, links jsonb, provider, status, error, fetched_at)
@@ -47,7 +52,16 @@ tailor_jobs(id, profile_id, resume_id, job_id, source, title, company, jd_md,
          status, error, created_at, updated_at)
          -- on-demand JD → tailored resume + cover letter DOCX. Agent writes files under
          -- TAILOR_DIR; API streams them. Never submitted. Raw resume stays on disk.
+job_discoveries(job_id, profile_id, source, discovered_at)
+         -- Week 8: which profile's personalized web search surfaced a job.
+         -- Purely additive -- does not change job_sources' contract. A job can
+         -- be both connector-sourced (job_sources) and personalized-search-
+         -- discovered (job_discoveries) for the same profile.
 ```
+
+`profiles.last_personalized_search_at` (Week 8) drives the personalized-search
+schedule -- checked inside the agent's existing polling loop, not a k8s
+CronJob (no cluster infra exists in this repo yet).
 
 `dedup_hash = sha256(lower(company) || '|' || normalize(title) || '|' || normalize(location))`.
 
@@ -83,6 +97,9 @@ Implementations: `OllamaLLM`, `BedrockLLM`, `LocalEmbedder`, `BedrockEmbedder`. 
 ### 4.3 Key REST endpoints (Go API)
 
 ```
+GET  /profiles           list all named profiles (Week 8: the UI's profile switcher)
+                         every endpoint below takes ?profile=<name>; falls back to
+                         DEFAULT_PROFILE_NAME, then the first profile alphabetically
 GET  /profile            skill list + has_embedding + latest resume status
 PUT  /profile            replace skill list (clears embedding until next agent pass)
 POST /profile/resume     store PDF/DOCX as pending; Python agent parses (no Go parse)
@@ -91,6 +108,8 @@ GET  /jobs               rank by scores.composite; omit band=excluded; include n
                          sort=salary orders by FX-normalised pay, then review rating, then composite
                          (INR + value < 1000 is treated as LPA for ranking only; Adzuna IN quirk)
                          payload includes salary_min/max/currency + review (links/rating; snippets omitted on list)
+                         personalized_match: true if the requesting profile's own personalized
+                         search (job_discoveries) surfaced this job (Week 8)
 GET  /jobs/{id}          job detail + full breakdown + optional analysis (justification/tailoring); excluded jobs still returned so the gate is explainable
                          refreshes a stale company+role review via Brave (if keyed) or link-only
 POST /reviews/refresh    cache reviews for salary-listed jobs (max 40). No Glassdoor/Mouthshut scrape.

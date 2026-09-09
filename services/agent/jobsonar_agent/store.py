@@ -6,6 +6,7 @@ from collections.abc import Iterable
 import psycopg
 
 from jobsonar_agent import config
+from jobsonar_agent.dedup import dedup_hash
 
 
 def _vec(values: Iterable[float]) -> str:
@@ -69,13 +70,16 @@ class Store:
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id::text, storage_uri
+                SELECT id::text, storage_uri, profile_id::text
                 FROM resumes
                 WHERE status = 'pending'
                 ORDER BY created_at
                 """
             )
-            return [{"id": r[0], "storage_uri": r[1]} for r in cur.fetchall()]
+            return [
+                {"id": r[0], "storage_uri": r[1], "profile_id": r[2]}
+                for r in cur.fetchall()
+            ]
 
     def mark_resume(self, resume_id: str, status: str, parsed: dict | None, error: str = "") -> None:
         with self.connect() as conn, conn.cursor() as cur:
@@ -89,47 +93,33 @@ class Store:
             )
             conn.commit()
 
-    def upsert_skills(self, skills: list[str]) -> None:
+    def upsert_skills(self, profile_id: str, skills: list[str]) -> None:
+        """Week 8: profiles are named and pre-seeded (amol/nitiraj) --
+        this only ever updates an existing row by id, it never inserts."""
         raw = json.dumps(skills)
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT id FROM profiles ORDER BY updated_at DESC LIMIT 1")
-            row = cur.fetchone()
-            if row:
-                cur.execute(
-                    """
-                    UPDATE profiles
-                    SET skills = %s::jsonb, embedding = NULL, updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (raw, row[0]),
-                )
-            else:
-                cur.execute("INSERT INTO profiles (skills) VALUES (%s::jsonb)", (raw,))
+            cur.execute(
+                """
+                UPDATE profiles
+                SET skills = %s::jsonb, embedding = NULL, updated_at = now()
+                WHERE id = %s::uuid
+                """,
+                (raw, profile_id),
+            )
             conn.commit()
 
-    def upsert_profile(self, skills: list[str], embedding: list[float]) -> None:
+    def upsert_profile(self, profile_id: str, skills: list[str], embedding: list[float]) -> None:
         raw = json.dumps(skills)
         vec = _vec(embedding)
         with self.connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT id FROM profiles ORDER BY updated_at DESC LIMIT 1")
-            row = cur.fetchone()
-            if row:
-                cur.execute(
-                    """
-                    UPDATE profiles
-                    SET skills = %s::jsonb, embedding = %s::vector, updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (raw, vec, row[0]),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO profiles (skills, embedding)
-                    VALUES (%s::jsonb, %s::vector)
-                    """,
-                    (raw, vec),
-                )
+            cur.execute(
+                """
+                UPDATE profiles
+                SET skills = %s::jsonb, embedding = %s::vector, updated_at = now()
+                WHERE id = %s::uuid
+                """,
+                (raw, vec, profile_id),
+            )
             conn.commit()
 
     def profiles_missing_embedding(self) -> list[dict]:
@@ -180,26 +170,53 @@ class Store:
                 for r in cur.fetchall()
             ]
 
-    def current_profile(self) -> dict | None:
-        """The single profile this project targets (CLAUDE.md: single-user).
-        Same "most recently updated" selection as upsert_skills/upsert_profile."""
+    def list_profiles(self) -> list[dict]:
+        """Week 8: named multi-profile support. Every profile-scoped agent
+        pass (scoring, shortlist, deep-dive, personalized search) iterates
+        this instead of assuming a single implicit profile."""
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id::text, skills, seniority, location, remote_pref
+                SELECT id::text, name, skills, seniority, location, remote_pref,
+                       last_personalized_search_at
                 FROM profiles
-                ORDER BY updated_at DESC
-                LIMIT 1
+                ORDER BY name
                 """
+            )
+            out = []
+            for rid, name, skills, seniority, location, remote_pref, last_search in cur.fetchall():
+                if isinstance(skills, str):
+                    skills = json.loads(skills)
+                out.append({
+                    "id": rid,
+                    "name": name,
+                    "skills": skills or [],
+                    "seniority": seniority,
+                    "location": location,
+                    "remote_pref": remote_pref,
+                    "last_personalized_search_at": last_search,
+                })
+            return out
+
+    def get_profile(self, profile_id: str) -> dict | None:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, name, skills, seniority, location, remote_pref
+                FROM profiles
+                WHERE id = %s::uuid
+                """,
+                (profile_id,),
             )
             row = cur.fetchone()
             if not row:
                 return None
-            rid, skills, seniority, location, remote_pref = row
+            rid, name, skills, seniority, location, remote_pref = row
             if isinstance(skills, str):
                 skills = json.loads(skills)
             return {
                 "id": rid,
+                "name": name,
                 "skills": skills or [],
                 "seniority": seniority,
                 "location": location,
@@ -373,16 +390,17 @@ class Store:
             )
             conn.commit()
 
-    def latest_done_resume(self) -> dict | None:
+    def latest_done_resume(self, profile_id: str) -> dict | None:
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id::text, storage_uri
                 FROM resumes
-                WHERE status = 'done'
+                WHERE status = 'done' AND profile_id = %s::uuid
                 ORDER BY created_at DESC
                 LIMIT 1
-                """
+                """,
+                (profile_id,),
             )
             row = cur.fetchone()
             if not row:
@@ -393,7 +411,8 @@ class Store:
         with self.connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id::text, title, company, jd_md, status, resume_md, cover_letter_md, notes_md
+                SELECT id::text, profile_id::text, title, company, jd_md, status,
+                       resume_md, cover_letter_md, notes_md
                 FROM tailor_jobs
                 WHERE status = 'pending'
                    OR (status = 'done' AND COALESCE(resume_docx_uri, '') = '')
@@ -403,13 +422,14 @@ class Store:
             return [
                 {
                     "id": r[0],
-                    "title": r[1] or "",
-                    "company": r[2] or "",
-                    "jd_md": r[3] or "",
-                    "status": r[4] or "",
-                    "resume_md": r[5] or "",
-                    "cover_letter_md": r[6] or "",
-                    "notes_md": r[7] or "",
+                    "profile_id": r[1],
+                    "title": r[2] or "",
+                    "company": r[3] or "",
+                    "jd_md": r[4] or "",
+                    "status": r[5] or "",
+                    "resume_md": r[6] or "",
+                    "cover_letter_md": r[7] or "",
+                    "notes_md": r[8] or "",
                 }
                 for r in cur.fetchall()
             ]
@@ -451,6 +471,60 @@ class Store:
                     resume_md, cover_letter_md, notes_md, model,
                     resume_docx_uri, cover_docx_uri, tailor_id,
                 ),
+            )
+            conn.commit()
+
+    def upsert_discovered_job(self, job: dict, profile_id: str) -> str:
+        """Writes one personalized-search result (Week 8). Dedupes against
+        every other source via the same dedup_hash the Go connectors use
+        (jobsonar_agent.dedup) -- a role a connector already ingested
+        collapses to that same jobs row, just gains a job_sources +
+        job_discoveries entry, rather than duplicating it. skills_extracted
+        is left NULL so the next score_jobs pass extracts it for real."""
+        h = dedup_hash(job["company"], job["title"], job.get("location") or "")
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO jobs (dedup_hash, source, source_url, title, company, location, remote_type, description_md)
+                VALUES (%(hash)s, 'personalized-search', %(url)s, %(title)s, %(company)s, %(location)s, %(remote_type)s, %(description)s)
+                ON CONFLICT (dedup_hash) DO UPDATE SET last_seen_at = now()
+                RETURNING id::text
+                """,
+                {
+                    "hash": h,
+                    "url": job["source_url"],
+                    "title": job["title"],
+                    "company": job["company"],
+                    "location": job.get("location") or "",
+                    "remote_type": job.get("remote_type") or "",
+                    "description": job.get("description_md") or "",
+                },
+            )
+            job_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO job_sources (job_id, source, source_url)
+                VALUES (%s::uuid, 'personalized-search', %s)
+                ON CONFLICT (job_id, source, source_url) DO NOTHING
+                """,
+                (job_id, job["source_url"]),
+            )
+            cur.execute(
+                """
+                INSERT INTO job_discoveries (job_id, profile_id, source, discovered_at)
+                VALUES (%s::uuid, %s::uuid, 'personalized-search', now())
+                ON CONFLICT (job_id, profile_id) DO UPDATE SET discovered_at = now()
+                """,
+                (job_id, profile_id),
+            )
+            conn.commit()
+            return job_id
+
+    def mark_personalized_search_run(self, profile_id: str) -> None:
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE profiles SET last_personalized_search_at = now() WHERE id = %s::uuid",
+                (profile_id,),
             )
             conn.commit()
 

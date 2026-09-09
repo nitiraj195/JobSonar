@@ -26,20 +26,32 @@ async function req(path, opts = {}) {
   return data;
 }
 
+// withProfile appends ?profile=<name> (Week 8: named multi-profile support)
+// -- every endpoint below resolves the requesting profile this way, falling
+// back server-side (DEFAULT_PROFILE_NAME, then first alphabetically) when
+// profile is omitted.
+function withProfile(path, profile) {
+  if (!profile) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}profile=${encodeURIComponent(profile)}`;
+}
+
 export const api = {
+  profiles: () => req("/profiles"),
   jobs: (opts = {}) => {
     const q = new URLSearchParams();
     if (opts.hasSalary) q.set("has_salary", "1");
     if (opts.sort) q.set("sort", opts.sort);
+    if (opts.profile) q.set("profile", opts.profile);
     const qs = q.toString();
     return req("/jobs" + (qs ? `?${qs}` : ""));
   },
-  job: (id) => req(`/jobs/${id}`),
+  job: (id, profile) => req(withProfile(`/jobs/${id}`, profile)),
   refreshReviews: () => req("/reviews/refresh", { method: "POST" }),
-  tailorJobs: () => req("/tailor"),
+  tailorJobs: (profile) => req(withProfile("/tailor", profile)),
   tailorJob: (id) => req(`/tailor/${id}`),
-  createTailor: (body) => req("/tailor", { method: "POST", body: JSON.stringify(body) }),
-  createTailorUpload: (body) => req("/tailor", { method: "POST", body }),
+  createTailor: (body, profile) => req(withProfile("/tailor", profile), { method: "POST", body: JSON.stringify(body) }),
+  createTailorUpload: (body, profile) => req(withProfile("/tailor", profile), { method: "POST", body }),
   downloadTailorDocx: async (id, kind) => {
     const name = kind === "cover" ? "cover-letter.docx" : "resume-tailored.docx";
     let res;
@@ -68,14 +80,14 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
-  profile: () => req("/profile"),
-  saveProfile: (skills) => req("/profile", { method: "PUT", body: JSON.stringify({ skills }) }),
-  uploadResume: (file) => {
+  profile: (profile) => req(withProfile("/profile", profile)),
+  saveProfile: (skills, profile) => req(withProfile("/profile", profile), { method: "PUT", body: JSON.stringify({ skills }) }),
+  uploadResume: (file, profile) => {
     const body = new FormData();
     body.append("file", file);
-    return req("/profile/resume", { method: "POST", body });
+    return req(withProfile("/profile/resume", profile), { method: "POST", body });
   },
-  applications: () => req("/applications"),
-  saveJob: (jobId) => req("/applications", { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
+  applications: (profile) => req(withProfile("/applications", profile)),
+  saveJob: (jobId, profile) => req(withProfile("/applications", profile), { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
   moveApp: (id, status) => req(`/applications/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
 };

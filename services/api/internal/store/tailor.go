@@ -31,11 +31,12 @@ type TailorJob struct {
 }
 
 type TailorCreate struct {
-	JobID   *uuid.UUID
-	Source  string
-	Title   string
-	Company string
-	JDMD    string
+	ProfileID uuid.UUID
+	JobID     *uuid.UUID
+	Source    string
+	Title     string
+	Company   string
+	JDMD      string
 }
 
 func (s *Store) CreateTailorJob(ctx context.Context, in TailorCreate) (TailorJob, error) {
@@ -44,11 +45,11 @@ func (s *Store) CreateTailorJob(ctx context.Context, in TailorCreate) (TailorJob
 	}
 	var t TailorJob
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO tailor_jobs (job_id, source, title, company, jd_md, status)
-		VALUES ($1, $2, $3, $4, $5, 'pending')
+		INSERT INTO tailor_jobs (profile_id, job_id, source, title, company, jd_md, status)
+		VALUES ($1, $2, $3, $4, $5, $6, 'pending')
 		RETURNING id, job_id, source, title, company, jd_md, resume_md, cover_letter_md,
 		          notes_md, model, resume_docx_uri, cover_docx_uri, status, error, created_at, updated_at
-	`, in.JobID, in.Source, in.Title, in.Company, in.JDMD).Scan(
+	`, in.ProfileID, in.JobID, in.Source, in.Title, in.Company, in.JDMD).Scan(
 		&t.ID, &t.JobID, &t.Source, &t.Title, &t.Company, &t.JDMD,
 		&t.ResumeMD, &t.CoverLetterMD, &t.NotesMD, &t.Model, &t.ResumeDocxURI, &t.CoverDocxURI,
 		&t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt,
@@ -66,8 +67,8 @@ func (s *Store) GetTailorJob(ctx context.Context, id uuid.UUID) (TailorJob, erro
 	return t, err
 }
 
-func (s *Store) ListTailorJobs(ctx context.Context) ([]TailorJob, error) {
-	rows, err := s.pool.Query(ctx, tailorSelect+` ORDER BY created_at DESC LIMIT 20`)
+func (s *Store) ListTailorJobs(ctx context.Context, profileID uuid.UUID) ([]TailorJob, error) {
+	rows, err := s.pool.Query(ctx, tailorSelect+` WHERE profile_id = $1 ORDER BY created_at DESC LIMIT 20`, profileID)
 	if err != nil {
 		return nil, err
 	}
