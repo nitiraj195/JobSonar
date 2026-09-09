@@ -34,7 +34,7 @@ const BAND_LABEL = {
   excluded: "excluded by a hard gate",
 };
 
-export default function JobDetail() {
+export default function JobDetail({ profile }) {
   const { id } = useParams();
   const nav = useNavigate();
   const [job, setJob] = useState(null);
@@ -43,18 +43,18 @@ export default function JobDetail() {
 
   async function load() {
     try {
-      setJob(await api.job(id));
+      setJob(await api.job(id, profile));
     } catch (e) {
       setErr(e.message);
     }
   }
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { if (profile) load(); }, [id, profile]);
 
   async function save() {
     setBusy(true);
     setErr("");
     try {
-      const app = await api.saveJob(id);
+      const app = await api.saveJob(id, profile);
       await load();
       nav("/tracker");
       return app;

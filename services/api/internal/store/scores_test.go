@@ -58,8 +58,8 @@ func seedProfile(t *testing.T, s *Store) uuid.UUID {
 	t.Helper()
 	profileID := uuid.New()
 	_, err := s.pool.Exec(context.Background(), `
-		INSERT INTO profiles (id, skills, updated_at) VALUES ($1, '[]'::jsonb, now())
-	`, profileID)
+		INSERT INTO profiles (id, name, skills, updated_at) VALUES ($1, $2, '[]'::jsonb, now())
+	`, profileID, "test-"+profileID.String())
 	if err != nil {
 		t.Fatalf("seed profile: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestListJobs_OrdersByCompositeAndExcludesGatedBand(t *testing.T) {
 	stretchID := seedJobWithScore(t, s, profileID, 0.20, "stretch")
 	excludedID := seedJobWithScore(t, s, profileID, 0.99, "excluded") // high composite, still gated
 
-	jobs, err := s.ListJobs(context.Background(), JobListOpts{})
+	jobs, err := s.ListJobs(context.Background(), profileID, JobListOpts{})
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestListJobs_OrdersByCompositeAndExcludesGatedBand(t *testing.T) {
 	// GetJob, unlike ListJobs, must still surface the excluded job -- Week
 	// 6 Day 4: gated jobs are never silently dropped, only hidden from
 	// the default ranked list.
-	excluded, err := s.GetJob(context.Background(), excludedID)
+	excluded, err := s.GetJob(context.Background(), profileID, excludedID)
 	if err != nil {
 		t.Fatalf("GetJob(excluded): %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGetJob_IncludesAnalysis(t *testing.T) {
 		t.Fatalf("seed analysis: %v", err)
 	}
 
-	job, err := s.GetJob(ctx, jobID)
+	job, err := s.GetJob(ctx, profileID, jobID)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestGetJob_IncludesAnalysis(t *testing.T) {
 		t.Fatalf("want analysis on detail, got %+v", job.Analysis)
 	}
 
-	jobs, err := s.ListJobs(ctx, JobListOpts{})
+	jobs, err := s.ListJobs(ctx, profileID, JobListOpts{})
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
@@ -143,6 +143,7 @@ func TestGetJob_IncludesAnalysis(t *testing.T) {
 
 func TestListJobs_UnscoredJobHasNilScore(t *testing.T) {
 	s := newTestStore(t)
+	profileID := seedProfile(t, s)
 	ctx := context.Background()
 	jobID := uuid.New()
 	_, err := s.pool.Exec(ctx, `
@@ -154,12 +155,71 @@ func TestListJobs_UnscoredJobHasNilScore(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = s.pool.Exec(context.Background(), "DELETE FROM jobs WHERE id = $1", jobID) })
 
-	job, err := s.GetJob(ctx, jobID)
+	job, err := s.GetJob(ctx, profileID, jobID)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
 	if job.Score != nil {
 		t.Fatalf("want nil Score for an unscored job, got %+v", job.Score)
+	}
+}
+
+// Week 8: personalized_match reflects only the *requesting* profile's own
+// job_discoveries row -- a job discovered for one profile must not show
+// as a match for another.
+func TestGetJob_PersonalizedMatchIsPerProfile(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	profileA := seedProfile(t, s)
+	profileB := seedProfile(t, s)
+	jobID := uuid.New()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO jobs (id, dedup_hash, source, source_url, title, company, location)
+		VALUES ($1, $2, 'personalized-search', $3, 'Discovered Job', 'Acme Discover Test', 'Pune')
+	`, jobID, "discover-test-"+jobID.String(), "https://example.com/"+jobID.String())
+	if err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+	t.Cleanup(func() { _, _ = s.pool.Exec(context.Background(), "DELETE FROM jobs WHERE id = $1", jobID) })
+
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO job_discoveries (job_id, profile_id) VALUES ($1, $2)
+	`, jobID, profileA)
+	if err != nil {
+		t.Fatalf("seed job_discoveries: %v", err)
+	}
+
+	got, err := s.GetJob(ctx, profileA, jobID)
+	if err != nil {
+		t.Fatalf("GetJob(profileA): %v", err)
+	}
+	if !got.PersonalizedMatch {
+		t.Fatal("want personalized_match=true for the profile that discovered it")
+	}
+
+	got, err = s.GetJob(ctx, profileB, jobID)
+	if err != nil {
+		t.Fatalf("GetJob(profileB): %v", err)
+	}
+	if got.PersonalizedMatch {
+		t.Fatal("want personalized_match=false for a different profile")
+	}
+
+	jobs, err := s.ListJobs(ctx, profileA, JobListOpts{})
+	if err != nil {
+		t.Fatalf("ListJobs(profileA): %v", err)
+	}
+	found := false
+	for _, j := range jobs {
+		if j.ID == jobID {
+			found = true
+			if !j.PersonalizedMatch {
+				t.Fatal("want personalized_match=true in the list view too")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("discovered job missing from ListJobs")
 	}
 }
 
@@ -199,7 +259,7 @@ func TestListJobs_SalaryFilterAndHighPayOrder(t *testing.T) {
 	lpa := seedJobWithSalary(t, s, profileID, 0.55, "possible", 20, 25, "", "Pune")
 	unpaid := seedJobWithScore(t, s, profileID, 0.99, "strong")
 
-	filtered, err := s.ListJobs(context.Background(), JobListOpts{HasSalary: true, Sort: "match"})
+	filtered, err := s.ListJobs(context.Background(), profileID, JobListOpts{HasSalary: true, Sort: "match"})
 	if err != nil {
 		t.Fatalf("ListJobs has_salary: %v", err)
 	}
@@ -216,7 +276,7 @@ func TestListJobs_SalaryFilterAndHighPayOrder(t *testing.T) {
 		t.Fatalf("sort=match should still lead with highest composite (lowPay), got %v", got)
 	}
 
-	ranked, err := s.ListJobs(context.Background(), JobListOpts{HasSalary: true, Sort: "salary"})
+	ranked, err := s.ListJobs(context.Background(), profileID, JobListOpts{HasSalary: true, Sort: "salary"})
 	if err != nil {
 		t.Fatalf("ListJobs sort=salary: %v", err)
 	}

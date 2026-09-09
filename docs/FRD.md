@@ -4,11 +4,11 @@ Version 0.1 · Owner: you · Status: Draft
 
 ## 1. Purpose & scope
 
-JobSonar helps a single job seeker find, evaluate, and track relevant roles. It ingests jobs from legitimate sources, ranks them against a resume with an explainable score, and manages the application lifecycle with analytics. Scope is a **single-user** tool (multi-user is out of scope for v1).
+JobSonar helps job seekers find, evaluate, and track relevant roles. It ingests jobs from legitimate sources, ranks them against a resume with an explainable score, and manages the application lifecycle with analytics. Scope is a small, fixed set of **named profiles** sharing one instance (Week 8: two — `amol`, `nitiraj`) — each with an independent resume, skills, and application funnel; not a general multi-tenant/auth product.
 
 ## 2. Actors
 
-- **Seeker** — the user. Uploads a resume, sets preferences, reviews matches, tracks applications.
+- **Seeker** — a named profile (e.g. `amol`, `nitiraj`). Uploads a resume, sets preferences, reviews matches, tracks applications; switches between profiles via the UI's profile selector.
 - **System agents** — the sourcing connectors and the matching agent, which act autonomously on a schedule.
 
 ## 3. Functional requirements

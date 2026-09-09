@@ -30,3 +30,22 @@ DEEP_DIVE_DESC_CHARS = int(env("DEEP_DIVE_DESC_CHARS", "4000"))
 TAILOR_RESUME_CHARS = int(env("TAILOR_RESUME_CHARS", "12000"))
 TAILOR_JD_CHARS = int(env("TAILOR_JD_CHARS", "8000"))
 TAILOR_DIR = env("TAILOR_DIR", "./data/tailor")
+
+# Week 8: personalized web search (agent-driven, per profile). Off by
+# default (fail-closed, same style as DEEP_DIVE_OPT_IN) -- it's a new
+# source type outside "aggregator API or ATS endpoint" (golden rule 2)
+# and new premium spend outside the shortlist-only Bedrock tiering
+# (golden rule 4), both deliberate, flagged deviations, not defaults.
+PERSONALIZED_SEARCH_OPT_IN = env("PERSONALIZED_SEARCH_OPT_IN", "") == "1"
+PERSONALIZED_SEARCH_INTERVAL_HOURS = float(env("PERSONALIZED_SEARCH_INTERVAL_HOURS", "24"))
+PERSONALIZED_SEARCH_MAX_RESULTS = int(env("PERSONALIZED_SEARCH_MAX_RESULTS", "8"))
+# Shells out to the already-authenticated Claude Code CLI instead of a new
+# Anthropic/Bedrock API key -- revisit with a real API client once this
+# moves to a cloud deployment (CLAUDE.md "when unsure": flagged, not a
+# silent workaround).
+# A real run (8-result cap, one profile) measured 423s end to end --
+# --output-format json buffers everything until the whole multi-step
+# search+verify completes, so there's no partial output before then.
+# 180s cut real runs off mid-search; 600s leaves headroom.
+CLAUDE_CLI_PATH = env("CLAUDE_CLI_PATH", "claude")
+CLAUDE_CLI_TIMEOUT_SECONDS = int(env("CLAUDE_CLI_TIMEOUT_SECONDS", "600"))

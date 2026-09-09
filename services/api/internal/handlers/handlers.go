@@ -18,8 +18,8 @@ import (
 const maxResumeBytes = 5 << 20
 
 type Jobs interface {
-	ListJobs(ctx context.Context, opts store.JobListOpts) ([]store.Job, error)
-	GetJob(ctx context.Context, id uuid.UUID) (store.Job, error)
+	ListJobs(ctx context.Context, profileID uuid.UUID, opts store.JobListOpts) ([]store.Job, error)
+	GetJob(ctx context.Context, profileID, id uuid.UUID) (store.Job, error)
 }
 
 type ReviewCache interface {
@@ -32,19 +32,21 @@ type Companies interface {
 }
 
 type Profiles interface {
-	GetProfile(ctx context.Context) (store.Profile, error)
-	UpsertProfile(ctx context.Context, skills []string) (store.Profile, error)
+	GetProfile(ctx context.Context, profileID uuid.UUID) (store.Profile, error)
+	GetProfileByName(ctx context.Context, name string) (store.Profile, error)
+	ListProfiles(ctx context.Context) ([]store.Profile, error)
+	UpsertProfile(ctx context.Context, profileID uuid.UUID, skills []string) (store.Profile, error)
 }
 
 type Applications interface {
-	ListApplications(ctx context.Context) ([]store.Application, error)
-	CreateApplication(ctx context.Context, jobID uuid.UUID) (store.Application, error)
+	ListApplications(ctx context.Context, profileID uuid.UUID) ([]store.Application, error)
+	CreateApplication(ctx context.Context, profileID, jobID uuid.UUID) (store.Application, error)
 	UpdateApplicationStatus(ctx context.Context, id uuid.UUID, status string) (store.Application, error)
 }
 
 type Resumes interface {
-	CreateResume(ctx context.Context, storageURI string) (store.Resume, error)
-	LatestResume(ctx context.Context) (store.Resume, error)
+	CreateResume(ctx context.Context, profileID uuid.UUID, storageURI string) (store.Resume, error)
+	LatestResume(ctx context.Context, profileID uuid.UUID) (store.Resume, error)
 }
 
 type Handler struct {
@@ -62,7 +64,7 @@ type Handler struct {
 type TailorJobs interface {
 	CreateTailorJob(ctx context.Context, in store.TailorCreate) (store.TailorJob, error)
 	GetTailorJob(ctx context.Context, id uuid.UUID) (store.TailorJob, error)
-	ListTailorJobs(ctx context.Context) ([]store.TailorJob, error)
+	ListTailorJobs(ctx context.Context, profileID uuid.UUID) ([]store.TailorJob, error)
 }
 
 func New(jobs Jobs, companies Companies, profiles Profiles, applications Applications, resumes Resumes, resumeDir string) *Handler {
@@ -91,6 +93,7 @@ func (h *Handler) Mount(app *fiber.App) {
 	app.Get("/jobs/:id", h.getJob)
 	app.Post("/reviews/refresh", h.refreshReviews)
 	app.Post("/companies", h.createCompany)
+	app.Get("/profiles", h.listProfiles)
 	app.Get("/profile", h.getProfile)
 	app.Put("/profile", h.putProfile)
 	app.Post("/profile/resume", h.uploadResume)
@@ -102,6 +105,44 @@ func (h *Handler) Mount(app *fiber.App) {
 	app.Get("/applications", h.listApplications)
 	app.Post("/applications", h.createApplication)
 	app.Patch("/applications/:id", h.patchApplication)
+}
+
+// resolveProfile resolves the requesting profile from ?profile=<name>
+// (Week 8: named multi-profile support). Falls back to DEFAULT_PROFILE_NAME,
+// then to the first profile alphabetically, so existing callers that never
+// pass ?profile= (older UI builds, curl, tests) keep working against
+// whichever single profile exists locally.
+func (h *Handler) resolveProfile(c *fiber.Ctx) (store.Profile, error) {
+	name := strings.TrimSpace(c.Query("profile"))
+	if name == "" {
+		name = strings.TrimSpace(os.Getenv("DEFAULT_PROFILE_NAME"))
+	}
+	if name != "" {
+		return h.profiles.GetProfileByName(c.Context(), name)
+	}
+	list, err := h.profiles.ListProfiles(c.Context())
+	if err != nil {
+		return store.Profile{}, err
+	}
+	if len(list) == 0 {
+		return store.Profile{}, store.ErrNotFound
+	}
+	return list[0], nil
+}
+
+func profileErr(err error) error {
+	if err == store.ErrNotFound {
+		return fiber.NewError(fiber.StatusNotFound, "profile not found")
+	}
+	return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+}
+
+func (h *Handler) listProfiles(c *fiber.Ctx) error {
+	list, err := h.profiles.ListProfiles(c.Context())
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(list)
 }
 
 // listJobs and getJob no longer compute anything: ranking and every
@@ -132,11 +173,15 @@ func parseJobListOpts(c *fiber.Ctx) (store.JobListOpts, error) {
 }
 
 func (h *Handler) listJobs(c *fiber.Ctx) error {
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
 	opts, err := parseJobListOpts(c)
 	if err != nil {
 		return err
 	}
-	jobs, err := h.jobs.ListJobs(c.Context(), opts)
+	jobs, err := h.jobs.ListJobs(c.Context(), p.ID, opts)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -155,11 +200,15 @@ func (h *Handler) listJobs(c *fiber.Ctx) error {
 }
 
 func (h *Handler) getJob(c *fiber.Ctx) error {
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid job id")
 	}
-	job, err := h.jobs.GetJob(c.Context(), id)
+	job, err := h.jobs.GetJob(c.Context(), p.ID, id)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "job not found")
@@ -254,12 +303,12 @@ func (h *Handler) createCompany(c *fiber.Ctx) error {
 }
 
 func (h *Handler) getProfile(c *fiber.Ctx) error {
-	p, err := h.profiles.GetProfile(c.Context())
+	p, err := h.resolveProfile(c)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return profileErr(err)
 	}
 	if h.resumes != nil {
-		if r, err := h.resumes.LatestResume(c.Context()); err == nil {
+		if r, err := h.resumes.LatestResume(c.Context(), p.ID); err == nil {
 			p.LatestResume = &r
 		}
 	}
@@ -269,6 +318,10 @@ func (h *Handler) getProfile(c *fiber.Ctx) error {
 func (h *Handler) uploadResume(c *fiber.Ctx) error {
 	if h.resumes == nil {
 		return fiber.NewError(fiber.StatusNotImplemented, "resume upload not configured")
+	}
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
 	}
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -296,7 +349,7 @@ func (h *Handler) uploadResume(c *fiber.Ctx) error {
 	if err := c.SaveFile(file, dest); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "could not store resume")
 	}
-	row, err := h.resumes.CreateResume(c.Context(), dest)
+	row, err := h.resumes.CreateResume(c.Context(), p.ID, dest)
 	if err != nil {
 		_ = os.Remove(dest)
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -309,6 +362,10 @@ type putProfileReq struct {
 }
 
 func (h *Handler) putProfile(c *fiber.Ctx) error {
+	existing, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
 	var req putProfileReq
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json")
@@ -327,7 +384,7 @@ func (h *Handler) putProfile(c *fiber.Ctx) error {
 		seen[key] = struct{}{}
 		clean = append(clean, s)
 	}
-	p, err := h.profiles.UpsertProfile(c.Context(), clean)
+	p, err := h.profiles.UpsertProfile(c.Context(), existing.ID, clean)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -335,7 +392,11 @@ func (h *Handler) putProfile(c *fiber.Ctx) error {
 }
 
 func (h *Handler) listApplications(c *fiber.Ctx) error {
-	apps, err := h.applications.ListApplications(c.Context())
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
+	apps, err := h.applications.ListApplications(c.Context(), p.ID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -347,6 +408,10 @@ type createAppReq struct {
 }
 
 func (h *Handler) createApplication(c *fiber.Ctx) error {
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
 	var req createAppReq
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json")
@@ -355,7 +420,7 @@ func (h *Handler) createApplication(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid job_id")
 	}
-	app, err := h.applications.CreateApplication(c.Context(), jobID)
+	app, err := h.applications.CreateApplication(c.Context(), p.ID, jobID)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "job not found")
@@ -405,7 +470,11 @@ func (h *Handler) listTailor(c *fiber.Ctx) error {
 	if h.tailor == nil {
 		return fiber.NewError(fiber.StatusNotImplemented, "tailor not configured")
 	}
-	rows, err := h.tailor.ListTailorJobs(c.Context())
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
+	rows, err := h.tailor.ListTailorJobs(c.Context(), p.ID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -479,7 +548,11 @@ func (h *Handler) createTailor(c *fiber.Ctx) error {
 	if h.tailor == nil {
 		return fiber.NewError(fiber.StatusNotImplemented, "tailor not configured")
 	}
-	in := store.TailorCreate{Source: "paste"}
+	p, err := h.resolveProfile(c)
+	if err != nil {
+		return profileErr(err)
+	}
+	in := store.TailorCreate{ProfileID: p.ID, Source: "paste"}
 	ct := strings.ToLower(c.Get("Content-Type"))
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		in.Title = strings.TrimSpace(c.FormValue("title"))
@@ -529,7 +602,7 @@ func (h *Handler) createTailor(c *fiber.Ctx) error {
 		}
 	}
 	if in.JobID != nil {
-		job, err := h.jobs.GetJob(c.Context(), *in.JobID)
+		job, err := h.jobs.GetJob(c.Context(), p.ID, *in.JobID)
 		if err != nil {
 			if err == store.ErrNotFound {
 				return fiber.NewError(fiber.StatusNotFound, "job not found")

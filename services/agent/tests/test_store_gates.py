@@ -38,10 +38,10 @@ def profile_and_job(store):
     with store.connect() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO profiles (id, skills, must_have_skills, seniority, location, remote_pref)
-            VALUES (%s::uuid, '[]'::jsonb, '[]'::jsonb, NULL, NULL, NULL)
+            INSERT INTO profiles (id, name, skills, must_have_skills, seniority, location, remote_pref)
+            VALUES (%s::uuid, %s, '[]'::jsonb, '[]'::jsonb, NULL, NULL, NULL)
             """,
-            (profile_id,),
+            (profile_id, f"gate-test-{profile_id}"),
         )
         cur.execute(
             """

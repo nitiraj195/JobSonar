@@ -4,18 +4,18 @@ import { api } from "../api.js";
 
 const COLS = ["saved", "applied", "screen", "interview", "offer", "closed"];
 
-export default function Tracker() {
+export default function Tracker({ profile }) {
   const [apps, setApps] = useState([]);
   const [err, setErr] = useState("");
 
   async function load() {
     try {
-      setApps((await api.applications()) || []);
+      setApps((await api.applications(profile)) || []);
     } catch (e) {
       setErr(e.message);
     }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { if (profile) load(); }, [profile]);
 
   async function move(id, status) {
     try {

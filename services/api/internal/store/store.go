@@ -57,6 +57,10 @@ type Job struct {
 	HasAnalysis   bool           `json:"has_analysis"`
 	Analysis      *Analysis      `json:"analysis,omitempty"`
 	Review        *CompanyReview `json:"review,omitempty"`
+	// PersonalizedMatch is true when the requesting profile's own
+	// personalized web search (Week 8) surfaced this job -- see
+	// job_discoveries. Independent of Score/Analysis.
+	PersonalizedMatch bool `json:"personalized_match"`
 }
 
 // JobListOpts filters and reorders GET /jobs. Ranking stays in SQL.
@@ -87,6 +91,7 @@ type Resume struct {
 
 type Profile struct {
 	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
 	Skills       []string  `json:"skills"`
 	HasEmbedding bool      `json:"has_embedding"`
 	Embedding    []float64 `json:"-"`
@@ -134,12 +139,7 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
-// currentProfileID names the same "single profile, most recently updated"
-// selection used throughout (upsert_skills/upsert_profile in the agent;
-// the one profile this single-user project targets, per CLAUDE.md).
-const currentProfileID = `(SELECT id FROM profiles ORDER BY updated_at DESC LIMIT 1)`
-
-func (s *Store) ListJobs(ctx context.Context, opts JobListOpts) ([]Job, error) {
+func (s *Store) ListJobs(ctx context.Context, profileID uuid.UUID, opts JobListOpts) ([]Job, error) {
 	q := jobSelect + jobFrom + `
 		WHERE sc.band IS DISTINCT FROM 'excluded'`
 	if opts.HasSalary {
@@ -147,7 +147,7 @@ func (s *Store) ListJobs(ctx context.Context, opts JobListOpts) ([]Job, error) {
 		AND (j.salary_min IS NOT NULL OR j.salary_max IS NOT NULL)`
 	}
 	q += jobOrder(opts.Sort)
-	rows, err := s.pool.Query(ctx, q)
+	rows, err := s.pool.Query(ctx, q, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +155,13 @@ func (s *Store) ListJobs(ctx context.Context, opts JobListOpts) ([]Job, error) {
 	return scanJobs(rows)
 }
 
-func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
+func (s *Store) GetJob(ctx context.Context, profileID, id uuid.UUID) (Job, error) {
 	// Unlike ListJobs, an excluded (hard-gated) score is still returned
 	// here -- a job someone links to directly should explain why it was
 	// excluded, not disappear (Week 6 Day 4: never silently dropped).
 	row := s.pool.QueryRow(ctx, jobSelect+jobFrom+`
-		WHERE j.id = $1
-	`, id)
+		WHERE j.id = $2
+	`, profileID, id)
 	j, err := scanJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Job{}, ErrNotFound
@@ -181,30 +181,39 @@ const jobSelect = `
 		       an.justification_md, an.tailoring_md, an.model, an.created_at,
 		       rev.rating, COALESCE(rev.review_count, 0), COALESCE(rev.summary, ''),
 		       rev.snippets, rev.links, COALESCE(rev.provider, ''), COALESCE(rev.status, ''),
-		       rev.fetched_at
+		       rev.fetched_at,
+		       COALESCE(disc.personalized_match, false)
 `
 
+// jobFrom takes the requesting profile's id as $1 -- every caller (ListJobs,
+// GetJob) must pass it as the first bound parameter.
 const jobFrom = `
 		FROM jobs j
-		LEFT JOIN applications a ON a.job_id = j.id
+		LEFT JOIN applications a ON a.job_id = j.id AND a.profile_id = $1
 		LEFT JOIN LATERAL (
 			SELECT COALESCE(json_agg(json_build_object('source', src.source, 'source_url', src.source_url)), '[]') AS sources
 			FROM job_sources src WHERE src.job_id = j.id
 		) srcs ON true
 		LEFT JOIN LATERAL (
 			SELECT * FROM scores sc
-			WHERE sc.job_id = j.id AND sc.profile_id = ` + currentProfileID + `
+			WHERE sc.job_id = j.id AND sc.profile_id = $1
 			LIMIT 1
 		) sc ON true
 		LEFT JOIN LATERAL (
 			SELECT true AS has_analysis, justification_md, tailoring_md, model, created_at
 			FROM analyses an
-			WHERE an.job_id = j.id AND an.profile_id = ` + currentProfileID + `
+			WHERE an.job_id = j.id AND an.profile_id = $1
 			LIMIT 1
 		) an ON true
 		LEFT JOIN company_reviews rev
 		  ON rev.company_key = lower(trim(j.company))
 		 AND rev.role_key = lower(trim(j.title))
+		LEFT JOIN LATERAL (
+			SELECT true AS personalized_match
+			FROM job_discoveries jd
+			WHERE jd.job_id = j.id AND jd.profile_id = $1
+			LIMIT 1
+		) disc ON true
 `
 
 // salaryUSDExpr converts posted ranges to an approximate USD figure so
@@ -282,7 +291,8 @@ func scanJob(row rowScanner) (Job, error) {
 		&j.DescriptionMD, &j.SalaryMin, &j.SalaryMax, &j.Currency, &posted, &j.Status, &j.LastSeenAt, &sources, &appID, &appStatus,
 		&composite, &skillCov, &semantic, &seniorityFit, &locationFit, &recency, &band, &matchedRaw, &missingRaw,
 		&hasAnalysis, &just, &tail, &model, &analysisAt,
-		&revRating, &revCount, &revSummary, &revSnips, &revLinks, &revProvider, &revStatus, &revFetched); err != nil {
+		&revRating, &revCount, &revSummary, &revSnips, &revLinks, &revProvider, &revStatus, &revFetched,
+		&j.PersonalizedMatch); err != nil {
 		return Job{}, err
 	}
 	j.HasAnalysis = hasAnalysis

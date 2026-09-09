@@ -15,8 +15,8 @@ class _MemStore:
         self.analyses: list[dict] = []
         self.bands: list[str] = []
 
-    def current_profile(self):
-        return self._profile
+    def list_profiles(self):
+        return [self._profile]
 
     def jobs_for_deep_dive(self, profile_id: str, band: str):
         self.bands.append(band)
@@ -63,6 +63,7 @@ def _jobs():
 
 PROFILE = {
     "id": "p1",
+    "name": "test",
     "skills": ["kubernetes", "prometheus"],
     "seniority": None,
     "location": "Pune",
