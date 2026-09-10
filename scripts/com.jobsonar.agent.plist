@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jobsonar.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/nitiraj.patne/Library/CloudStorage/OneDrive-Avalara/Desktop/nitiraj.patne/JobSonar/scripts/run-agent-once.sh</string>
+    </array>
+    <!-- Once daily. This is a LaunchAgent (runs in your user session, not
+         root) so it can reach the Claude Code CLI's login/keychain --
+         a LaunchDaemon could not. Only fires while you're logged in. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <!-- Deliberately not RunAtLoad: loading this should never itself
+         trigger a paid personalized-search call. -->
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/nitiraj.patne/Library/Logs/jobsonar-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nitiraj.patne/Library/Logs/jobsonar-agent.log</string>
+</dict>
+</plist>
